@@ -5,6 +5,7 @@ import base64
 import copy
 import io
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -137,6 +138,21 @@ def _prepare_heatmap_dataframe(df: pd.DataFrame) -> pd.DataFrame | None:
     if "orf_class" in melt_df.columns:
         keep_cols.append("orf_class")
     return melt_df[keep_cols]
+
+_DF_REASSIGN_PATTERN = re.compile(r"\bdf\s*=\s*pd\.DataFrame", re.IGNORECASE)
+_SAMPLE_PHRASE_PATTERN = re.compile(r"Sample DataFrame", re.IGNORECASE)
+
+
+def _validate_generated_code(code: str) -> None:
+    """Raise ValueError if generated code violates basic constraints (e.g., recreating df)."""
+    if _DF_REASSIGN_PATTERN.search(code):
+        raise ValueError(
+            "Generated code redefines 'df' via pd.DataFrame; please use the provided dataframe from the pipeline."
+        )
+    if _SAMPLE_PHRASE_PATTERN.search(code):
+        raise ValueError(
+            "Generated code contains sample DataFrame placeholders; please operate directly on the provided dataframe."
+        )
 
 
 def _merge_styles(global_style: Dict[str, Any] | None, layer_style: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -1015,6 +1031,7 @@ def main():
         debug_path: Optional[Path] = None
         exec_code = _normalize_plot_code_paths(generated_plot_code)
         try:
+            _validate_generated_code(generated_plot_code)
             local_vars = _build_exec_locals()
             exec(exec_code, local_vars, local_vars)
             last_exec_locals = local_vars
@@ -1045,6 +1062,7 @@ def main():
                 exec_code = _normalize_plot_code_paths(fixed)
                 write_text(fixed, code_path)
                 try:
+                    _validate_generated_code(fixed)
                     local_vars = _build_exec_locals()
                     exec(exec_code, local_vars, local_vars)
                     last_exec_locals = local_vars
