@@ -15,6 +15,7 @@ from PIL import Image
 
 from utils.io_utils import ensure_dir, write_json, write_text
 from utils.config import apply_env_defaults
+from utils.patch_ops import apply_patch_ops
 from agents.aesthetic_stylist import (
     llm_aesthetic_stylist,
     llm_aesthetic_stylist_refine,
@@ -36,7 +37,7 @@ from utils.llm_client import LLMClient
 from agents.report_builder import build_html_report
 from utils.spec_adapter import figure_spec_to_paper_schema, paper_schema_summary
 from utils.web_search import official_references
-from utils.style_rules import auto_tune_alpha, adjust_local_contrast
+from utils.style_rules import auto_tune_alpha, adjust_local_contrast, sanitize_backgrounds, prune_insets
 from utils.stats_utils import annotate_sample_size, add_errorbars
 from utils.style_spec import StyleSpec
 
@@ -153,6 +154,10 @@ def _validate_generated_code(code: str) -> None:
         raise ValueError(
             "Generated code contains sample DataFrame placeholders; please operate directly on the provided dataframe."
         )
+    if _RANDOM_DATA_PATTERN.search(code):
+        raise ValueError("Generated code uses np.random*; do not fabricate data. Use the provided df.")
+    if _INSET_PATTERN.search(code):
+        raise ValueError("Generated code adds inset_axes; avoid insets unless explicitly requested.")
 
 
 def _merge_styles(global_style: Dict[str, Any] | None, layer_style: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -1088,6 +1093,20 @@ def main():
                 except Exception:
                     pass
                 try:
+                    sanitize_backgrounds(fig)
+                except Exception:
+                    pass
+                try:
+                    prune_insets(
+                        fig,
+                        allow_insets=(
+                            getattr(args, "allow_insets", False)
+                            or bool(style_spec_dict.get("layout_tuning", {}).get("allow_insets"))
+                        ),
+                    )
+                except Exception:
+                    pass
+                try:
                     primary_ax = fig.axes[0] if fig.axes else None
                     x_field = None
                     y_field = None
@@ -1176,30 +1195,48 @@ def main():
         target_stage = None
         stage_scores: Dict[str, float] = {}
         stage_patches: Dict[str, Any] = {}
+        base_metric = None
         if isinstance(evaluation_json, dict):
             overall_block = evaluation_json.get("overall")
             if isinstance(overall_block, dict):
                 target_stage = overall_block.get("target_stage")
-                metric_value = overall_block.get(quality_metric_key)
+                base_metric = overall_block.get(quality_metric_key)
             stages_block = evaluation_json.get("stages")
             if isinstance(stages_block, dict):
                 for s_name, payload in stages_block.items():
                     if not isinstance(payload, dict):
                         continue
-                    score = payload.get("score")
-                    if isinstance(score, (int, float)):
-                        stage_scores[s_name] = float(score)
+                    sc = payload.get("score")
+                    if isinstance(sc, (int, float)):
+                        stage_scores[s_name] = float(sc)
                     patch = payload.get("patch_suggestions")
                     if patch:
                         stage_patches[s_name] = patch
-            if metric_value is None:
+            if base_metric is None:
                 semantic_block = evaluation_json.get("semantic_accuracy")
                 if isinstance(semantic_block, dict):
-                    metric_value = semantic_block.get(quality_metric_key)
-        try:
-            metric_value = float(metric_value)
-        except Exception:
-            metric_value = 0.0
+                    base_metric = semantic_block.get(quality_metric_key)
+        if getattr(args, "quality_metric", None) == "staged_weighted_score" and stage_scores:
+            weights = getattr(args, "stage_weights", {"L1": 0.4, "L2": 0.3, "L3": 0.2, "L4": 0.1})
+            metric_value = sum(stage_scores.get(k, 0.0) * float(weights.get(k, 0.0)) for k in ("L1", "L2", "L3", "L4"))
+        elif base_metric is not None:
+            try:
+                metric_value = float(base_metric)
+            except Exception:
+                metric_value = 0.0
+        else:
+            try:
+                metric_value = float(metric_value)
+            except Exception:
+                metric_value = 0.0
+
+        floors = getattr(args, "stage_min_floors", None) or {}
+        floors_failed = [k for k, v in floors.items() if stage_scores and stage_scores.get(k, 1.0) < float(v)]
+        if floors_failed:
+            try:
+                metric_value = min(float(metric_value), float(args.quality_threshold) - 1e-3)
+            except Exception:
+                pass
 
         feedback_for_next = {
             "visual_evaluator": evaluation_json,
@@ -1216,6 +1253,21 @@ def main():
             feedback_for_next["stage_scores"] = stage_scores
         if stage_patches:
             feedback_for_next["stage_patches"] = stage_patches
+
+        all_ops = []
+        for p in (stage_patches or {}).values():
+            ops = p.get("ops") if isinstance(p, dict) else None
+            if isinstance(ops, list):
+                all_ops.extend(ops)
+        if all_ops:
+            try:
+                mapping_spec, style_spec_dict_after, _notes = apply_patch_ops(mapping_spec, style_spec_dict, all_ops)
+                style_spec_state = StyleSpec(style_spec_dict_after)
+                applied_log = {"ops": all_ops, "notes": _notes, "style_after": style_spec_dict_after, "mapping_after": mapping_spec}
+                write_json(applied_log, out_dir / f"patch_ops_applied_iter_{iter_idx}.json")
+            except Exception as _e:
+                write_text(f"apply_patch_ops failed: {_e}", out_dir / f"patch_ops_error_iter_{iter_idx}.txt")
+        style_spec_dict = style_spec_state.to_dict()
 
         return {
             "iteration_index": iter_idx,

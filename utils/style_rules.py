@@ -9,6 +9,7 @@ from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
+from matplotlib import colors as mcolors
 
 
 def _iter_axes(fig: Figure) -> Iterable[Axes]:
@@ -147,3 +148,82 @@ def adjust_local_contrast(fig: Figure) -> None:
 
         for spine in ax.spines.values():
             spine.set_alpha(0.7)
+
+
+def sanitize_backgrounds(fig: Figure, *, alpha_threshold: float = 0.18, coverage_threshold: float = 0.85) -> None:
+    """Remove large opaque background rectangles (e.g., axvspan overlays)
+    that cover most of the axes and make the chart hard to read.
+    """
+    for ax in getattr(fig, "axes", []):
+        try:
+            x0, y0, x1, y1 = ax.get_xlim()[0], ax.get_ylim()[0], ax.get_xlim()[1], ax.get_ylim()[1]
+            data_area = abs((x1 - x0) * (y1 - y0)) if (x1 - x0) and (y1 - y0) else None
+        except Exception:
+            data_area = None
+        bbox = ax.get_position().bounds if hasattr(ax, "get_position") else None
+        for patch in list(getattr(ax, "patches", [])):
+            if not isinstance(patch, Rectangle):
+                continue
+            try:
+                fc = patch.get_facecolor()
+                if not fc:
+                    continue
+                rgba = mcolors.to_rgba(fc)
+                if rgba[3] is None or rgba[3] < alpha_threshold:
+                    continue
+            except Exception:
+                continue
+            # use axes coordinate system heuristic; if patch spans > coverage_threshold of axes, drop facecolor
+            try:
+                bb = patch.get_bbox()
+                if hasattr(bb, "width") and bbox:
+                    fig_area = bbox[2] * bbox[3]
+                    # fallback if we can compare bbox of patch in data units
+                    if data_area and bb.width and bb.height:
+                        coverage = min(1.0, abs(bb.width * bb.height) / data_area)
+                    else:
+                        coverage = 1.0  # conservative
+                else:
+                    coverage = 1.0
+            except Exception:
+                coverage = 1.0
+            if coverage >= coverage_threshold:
+                try:
+                    patch.set_facecolor((0, 0, 0, 0))
+                    patch.set_edgecolor((0, 0, 0, 0))
+                except Exception:
+                    try:
+                        patch.remove()
+                    except Exception:
+                        pass
+
+
+def prune_insets(fig: Figure, *, allow_insets: bool = False, min_area: float = 0.15) -> None:
+    """If not allowed, remove tiny inset axes that clutter the figure.
+    min_area is the minimum width*height in figure coordinates to keep an axes.
+    """
+    if allow_insets:
+        return
+    axes = list(getattr(fig, "axes", []))
+    if len(axes) <= 1:
+        return
+    # compute area of each axes; keep the largest and any that are reasonably sized
+    areas = []
+    for ax in axes:
+        try:
+            left, bottom, width, height = ax.get_position().bounds
+            areas.append((width * height, ax))
+        except Exception:
+            areas.append((1.0, ax))
+    if not areas:
+        return
+    areas.sort(reverse=True, key=lambda t: t[0])
+    keep = []
+    for i, (a, ax) in enumerate(areas):
+        if i == 0 or a >= min_area:
+            keep.append(ax)
+        else:
+            try:
+                ax.remove()
+            except Exception:
+                pass
