@@ -142,6 +142,8 @@ def _prepare_heatmap_dataframe(df: pd.DataFrame) -> pd.DataFrame | None:
 
 _DF_REASSIGN_PATTERN = re.compile(r"\bdf\s*=\s*pd\.DataFrame", re.IGNORECASE)
 _SAMPLE_PHRASE_PATTERN = re.compile(r"Sample DataFrame", re.IGNORECASE)
+_RANDOM_DATA_PATTERN = re.compile(r"np\.random\.", re.IGNORECASE)
+_INSET_PATTERN = re.compile(r"inset_axes\(|zoomed_inset_axes\(", re.IGNORECASE)
 
 
 def _validate_generated_code(code: str) -> None:
@@ -756,6 +758,7 @@ def main():
 
     def _execute_iteration(iter_idx: int, feedback_payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         nonlocal style_spec_state
+        nonlocal mapping_spec
         stage_name = f"iteration_{iter_idx}"
         extras = copy.deepcopy(design_base_extras)
         extras["style_spec"] = style_spec_state.to_dict()
