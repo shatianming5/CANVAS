@@ -1,0 +1,298 @@
+下面给出一份**可直接落地**的深度规划，分两部分：
+A) 在**当前流程**中系统性地加入「**透明度（alpha）** / **配色（palette/colormap）** / **统计标注（均值/区间/回归/显著性等）」。
+B) 将 **Visual Evaluator** 升级为四层级 **L1→L4** 分阶段评审（你给出的分层定义），并把它嵌入到**自反射迭代**中：每一轮先四层并行打分→定位“最大问题层”→路由到对应阶段的修复代理→再回到生成与评估。
+（说明：整体编排与自反射原则对齐论文 CoDA 的**模块化扩展**与**质量驱动的迭代**；参见 *Figure 2 架构总览* 与 *Algorithm 1 自反射循环*，以及 *Table 1 代理 I/O*。为保证口径一致，保留论文默认的**迭代上限=3**、**质量阈值 θₙ=0.85** 的门控；指标 EPR/VSR/OS 仍沿用原文的评测定义。）
+
+---
+
+## A. 在现有流程中加入「透明度 / 颜色 / 统计标注」
+
+### A.1 新增一个结构化样式契约：**StyleSpec**
+
+> 作为 Design Explorer（宏观设计）与 Code Generator（代码合成）之间的**细化样式层**，以及 Visual Evaluator（L3/L4）“可修补”的一致接口。CoDA 主张模块化与结构化通信；把这些可调样式独立成 Spec 有利于**自反射补丁（patches）**的闭环。
+
+**StyleSpec JSON（v1.0）**
+
+```json
+{
+  "style_spec_version": "1.0",
+  "palette": {
+    "mode": "categorical|sequential|diverging",
+    "name": "tab10|Set2|viridis|magma|RdBu|...",
+    "colors": ["#..."],            // 离散色时可给定
+    "n_colors": 8,
+    "color_mapping": {"groupA":"#.."},
+    "colorblind_safe": true,
+    "contrast_ratio_min": 4.5
+  },
+  "transparency": {
+    "global_alpha": 0.6,
+    "by_layer": {"points": 0.35, "fill": 0.25, "errorbar": 0.9},
+    "overplotting_strategy": "auto_alpha|jitter|density_cap"
+  },
+  "stat_annotations": {
+    "summary": ["mean_line","median_line"],      // axhline/axvline
+    "intervals": {"type":"ci","level":0.95,"method":"bootstrap|sem"},
+    "trend": {"type":"ols|loess","show_r2": true, "line_style":"--"},
+    "group_comparison": {"test":"ttest|mannwhitney","alpha_sig":0.05,"mark":"*"},
+    "text": [{"label":"r=0.73, p<0.01", "loc":"top-left"}]
+  },
+  "layout_tuning": {
+    "plt_style": "default|seaborn-v0_8-whitegrid",
+    "grid": {"show": true, "which": "major", "alpha": 0.2},
+    "ticks": {"rotation_x": 0, "format_y": "percent|currency|plain"},
+    "constrained_layout": true
+  },
+  "accessibility": {
+    "font_min_px": 12,
+    "wcag_level": "AA",
+    "legend_position": "best|right|bottom",
+    "legend_framealpha": 0.8
+  },
+  "patches": [
+    {"op":"set","path":"code.ax.scatter.alpha","value":0.35},
+    {"op":"insert","path":"code.axhline","value":{"y":"mean(y)","linestyle":"--","alpha":0.7}}
+  ]
+}
+```
+
+### A.2 规则与启发式（与 LLM 协作，降低漂移）
+
+> 这些规则由 **Aesthetic Stylist**（若你已按上一轮规划新增该代理）或现有 **Design Explorer → Code Generator** 的联动逻辑消费。
+
+1. **透明度（alpha）**
+
+* **拥挤度估计**（近似）：`density ≈ N_points / (axes_width_px * axes_height_px)`；
+
+  * `<0.001 → alpha≈0.9`；`0.001–0.01 → 0.6`；`>0.01 → 0.3`；
+* 按层微调：`points=0.3–0.4`，`fill_between=0.2–0.3`，`errorbar=0.8–0.95`；
+* 叠放策略：散点支持 `jitter`；过密时可做**密度上限**抽样提示（记入 `overplotting_strategy`）。
+
+2. **配色（palette/colormap）**
+
+* `color` 映射是**类别**→ `categorical`（`tab10/Set2/Paired`），>10 类建议图例分栏；
+* **有序/连续**→ `sequential`（`viridis`/`magma`）；**跨正负**→ `diverging`（`RdBu` 等）；
+* **可达性**：计算前景/背景近似对比度，低于目标（如 4.5）则自动切换深浅组合；启用**色盲友好**方案；
+* 色条（colorbar）与数值映射由 **L3 Calibration** 校准（见下文）。
+
+3. **统计标注（stat annotations）**
+
+* **时间/趋势**：`fill_between` 画 95%CI（`sem` 或 bootstrap），并可加 `moving average`；
+* **散点**：回归（OLS/LOESS，`R²`/`r,p` 注释），避免过拟合；
+* **分组柱/箱**：误差条（`sem`/`ci`），必要时显著性星标（t 检验/非参检验）；
+* **直方/密度**：**自动分箱**（Freedman–Diaconis / Sturges 兜底），可给 `binwidth` 提示；
+* **注释放置**：优先四角（TL/TR/BL/BR），避开主数据云；字号 ≥ `font_min_px`；
+* **数据不足/不满足检验假设**：降级为文字注释（“样本量过小，不绘制置信区间/显著性”），保证 **EPR**（执行通过率）不受影响。
+
+### A.3 流程接入点（文件与函数改动）
+
+* **`agents/llm_orchestrator.py`**
+
+  * 新增/接入：`llm_aesthetic_stylist(...) -> StyleSpec`（若已有则复用）；
+  * 在 `llm_code_generator(...)` 上下文中**显式消费 StyleSpec**（`palette/transparency/stat_annotations/layout_tuning/accessibility` 转译为 Matplotlib 调用）。
+* **`run.py`（主编排）**
+
+  * **Design Explorer → Aesthetic Stylist → Code Generator** 的顺序接入；
+  * 每轮将 `StyleSpec` 与 `viz_mapping` 一并写盘；
+  * Debug 失败路径：保留 “无 SciPy 时回退到 `numpy.polyfit` / `sem` 近似” 的分支，优先保证 **EPR**。
+
+---
+
+## B. 把 Visual Evaluator 升级为四层级 **L1→L4** 的阶段式评审与返修
+
+> 目标：把你给出的 L1/L2/L3/L4 规范化为**四个子评审器**（或一个评审器的四个 stage），它们读取**当前图片 + 各阶段 JSON（viz_mapping + design + stylespec + code 元数据）**，输出**逐层分数、问题、补丁**。与 CoDA 的**自反射**一致（参见 *Algorithm 1* 第 10–19 行），当质量不足则路由回上游相应阶段进行改进。
+
+### B.1 四层定义（评审职责与修复目标）
+
+* **L1 Orchestration**（全局统筹）
+
+  * 冻结顶层网格（全局 grid）、**布局密度**、**算力/时间预算**；设置 **journal/audience style**、**chart families**、**palette/fonts/dpi**、**legend policy**；
+  * **输出**：全局 style 的合规性与一致性；是否与目标受众/期刊风格匹配；图片分辨率与字体体系是否达标；
+  * **补丁焦点**：全局风格切换、分辨率/字体基线、图例策略（合并、位置策略）。
+
+* **L2 Composition**（版式编排）
+
+  * 排布“**chambers**/面板”，对齐小图；定义每张图的角色与类型；统一**单位/尺度**，优化 **gridspec/legend** 的使用；
+  * **输出**：网格/多子图的一致性、面板间对齐与留白、跨图图例复用；
+  * **补丁焦点**：`GridSpec / constrained_layout / shared_axes / legend=outside/inside` 决策；单位统一。
+
+* **L3 Calibration**（校准，不触碰全局布局）
+
+  * 每图的 **轴域/单位**、**统计摘要**（聚合/分箱/平滑）、**断轴**（broken axis）、**色条范围** 的**可验证**调整；
+  * **输出**：轴域是否覆盖语义需求、聚合/分箱是否合适、断轴是否合理、色条上下限与中心点是否正确；
+  * **补丁焦点**：`set_xlim/ylim`、分箱选择、`fill_between` 的区间方法、`brokenaxes` 或双轴标注、`colorbar(vmin/vmax/vcenter)`。
+
+* **L4 Details**（微观细节）
+
+  * **标签/刻度密度**、小数精度与对齐、注释箭头/透明度/线宽/间距、**局部对比度**；
+  * **输出**：可读性与专业外观、可达性（对比度/字号/色盲）、统计标注是否清晰；
+  * **补丁焦点**：`tick_params/formatter`、`annotate` 布局、`alpha/linewidth`、本地对比度增强、**统计标注**的放置/阈值。
+
+> 以上四层与 CoDA 的“Planning→Generation→Self‑Reflection”流程天然契合：L1/L2 对应**规划与编排**，L3/L4 对应**校准与微调**；它们都可在**自反射循环**内触发路由与早停（θₙ=0.85）。
+
+### B.2 Visual Evaluator 的 **I/O 契约（按 L1–L4 分层）**
+
+**输入**（每一层相同，但关注点不同）：
+
+* `image_path`（当前轮输出图像）；
+* `query/context`、`viz_mapping`（论文版或你的兼容层）、`design_result`、`style_spec`、`code_meta`（如子图数、DPI）；
+* `data_context`（形状、列、类型与统计要点）；
+
+**输出**（统一结构，按层填充）：
+
+```json
+{
+  "stage": "L1|L2|L3|L4",
+  "score": 0.0,                      // 0~1
+  "issues": [
+    {"id":"L3.axis.domain.insufficient","title":"Y 轴上界过低","severity":"critical","evidence":"..."},
+    {"id":"L4.ticks.too_dense","title":"X 刻度过密","severity":"major","target":"ticks.x","proposed":"rotation=30, locator=MaxNLocator(6)"}
+  ],
+  "patches": [
+    {"op":"set","path":"style.palette.name","value":"viridis"},
+    {"op":"set","path":"code.axes[0].set_ylim","value":[0, 120]},
+    {"op":"insert","path":"code.annotate","value":{"s":"r=0.73","xy":[0.02,0.95],"transform":"axes"}}
+  ],
+  "recommendation": "accept|apply_patches|escalate",
+  "confidence": 0.92
+}
+```
+
+> 与 CoDA 原评测中的“严格语义核验 / 质量评估 / 可达性检查 / 最终建议”保持一致（见论文评测提示词与指标部分），但我们将**输出拆成四个 stage** 以支撑定向返修。
+
+### B.3 选择“最大问题层”的**决策函数**
+
+* 每层得到 `score∈[0,1]` 与 `issues`（含 `severity∈{critical,major,minor}`）。
+* **综合代价** `cost(L) = w_s*(1-score) + w_c*#critical + w_m*#major + w_i*#issues`（示例权重：`w_s=1.0, w_c=2.0, w_m=1.0, w_i=0.1`）。
+* 选择 `argmax cost(L)` 作为本轮返修入口。
+* 若所有 `score ≥ 0.85` 且无 `critical`，则触发**早停**（与论文门控一致）。
+
+### B.4 路由与修复（按层对接相应代理）
+
+* **L1→Design Explorer（全局）**
+
+  * 输入：L1 patches（全局风格/图例策略/字体/分辨率/受众风格）
+  * 输出：更新的 `design_result.primary_design` 与 `StyleSpec.palette/font/dpi/legend`
+
+* **L2→VizMapping / Design Explorer（编排）**
+
+  * 输入：面板编排/共享轴/单位统一/图例布局的补丁
+  * 输出：`viz_mapping`（网格与子图定义）或 `design.layout_principles` 的更新
+
+* **L3→Data Processor / Aesthetic Stylist / Code Generator（校准）**
+
+  * 轴域/分箱/汇总/断轴/色条范围：
+
+    * 需要数据统计支持 → Data Processor 计算所需聚合/分箱参数；
+    * 色条/轴域/统计带 → Aesthetic Stylist 产出 StyleSpec 补丁；
+    * 最终落地 → Code Generator.revise 应用到 Matplotlib 调用。
+
+* **L4→Aesthetic Stylist / Code Generator（细节）**
+
+  * 刻度/格式/注释/透明度/线宽/间距/局部对比度 → 直接由 Aesthetic Stylist 生成 StyleSpec 补丁并回写代码。
+
+> 上述路由模式与论文 *Table 1* 的多代理分工一致：理解→规划→生成→自反射，并通过**全局 TODO**与**品质门控**形成稳定迭代。
+
+---
+
+## C. 具体落地：文件改动、函数签名与流程伪代码
+
+### C.1 新增/改动文件
+
+* `agents/aesthetic_stylist.py`
+
+  * `llm_aesthetic_stylist(query_result, data_result, viz_mapping, design_result, search_examples, visual_feedback=None) -> StyleSpec`
+  * `llm_aesthetic_stylist_refine(prev_stylespec, visual_feedback) -> StyleSpec`
+* `agents/visual_evaluator_staged.py`（或在现 evaluator 中分层）
+
+  * `evaluate_stage(stage: Literal["L1","L2","L3","L4"], image_path, contexts...) -> StageReport`
+  * `aggregate_reports([StageReport]) -> Decision`（返回“最大问题层”、整合补丁）
+* `utils/style_spec.py`（StyleSpec 的数据类与 JSONPatch 应用器）
+* `agents/llm_orchestrator.py` / `run.py`
+
+  * 接入 Aesthetic Stylist；
+  * 编排“**每轮四评审→定向修复→再生成**”。
+
+### C.2 主循环（与 CoDA Algorithm 1 一致的强化版）
+
+> 下方保留论文**最多 3 次**迭代与**阈值 0.85** 的门控；四层评审在每一轮内部完成一次“诊断→修复→再生”。（论文 *Algorithm 1* 第 10–19 行 & 第 4 节实验设置）
+
+```python
+for iter_id in range(MAX_ITER):  # 默认3
+    # 1) 规划与合成
+    qa = llm_query_analyzer(query)
+    dp = llm_data_processor(data_files)
+    vm = llm_viz_mapping(query, dp, qa)
+    de = llm_design_explorer(qa, dp, todos_from(qa))
+    ss = llm_aesthetic_stylist(qa, dp, vm, de, search_examples)  # 新增
+    code = llm_code_generator(de, dp, vm, ss, examples=search_examples)
+
+    # 2) 调试与出图
+    code_fixed, img = llm_debug_agent.run_and_fix(code)
+
+    # 3) 四层评审（并行/串行均可）
+    reports = []
+    for L in ["L1","L2","L3","L4"]:
+        rL = evaluate_stage(L, img, query, dp, vm, de, ss, code_meta=meta(code_fixed))
+        reports.append(rL)
+        save_json(rL, out_dir/f"eval_{L}_iter_{iter_id}.json")
+
+    # 4) 选择最大问题层
+    targetL = argmax_cost(reports)
+    if all_ok(reports, threshold=0.85):  # score>=0.85 & 无critical
+        break
+
+    # 5) 定向返修
+    patches = collect_patches(reports[targetL])
+    if targetL == "L1":
+        de = design_explorer_refine(de, feedback=reports[targetL])
+        ss = stylist_refine(ss, feedback=reports[targetL])
+    elif targetL == "L2":
+        vm = viz_mapping_refine(vm, feedback=reports[targetL])
+        de = design_explorer_refine(de, feedback=reports[targetL])
+    elif targetL == "L3":
+        dp = data_processor_refine(dp, feedback=reports[targetL])   # 提供分箱/聚合参数
+        ss = stylist_refine(ss, feedback=reports[targetL])
+    elif targetL == "L4":
+        ss = stylist_refine(ss, feedback=reports[targetL])
+
+    # 6) 带入补丁重生成（下一轮继续）
+```
+
+### C.3 评审打分与问题归因（每层的**判定要点**）
+
+* **L1**：`palette/fonts/dpi/legend_policy` 是否与受众样式一致；全局网格/密度是否超预算；多图风格是否一致。
+* **L2**：子图布局是否拥挤/漂移；面板角色是否清楚；坐标/单位是否统一；图例是否冗余。
+* **L3**：轴域覆盖；是否需要断轴；聚合/分箱/平滑是否合适且**可复现**；色条 `vmin/vmax/vcenter` 是否与数据相符。
+* **L4**：刻度密度（MaxNLocator）；格式器（百分比/货币/小数位）；注释箭头/线宽/alpha/对比度；统计标注是否遮挡/误导。
+
+> 判定与返回格式可沿用 CoDA 的**严格语义核验 + 质量评估 + 可达性检查 + 最终建议**，只是在**stage** 维度拆解并增加**patches**。
+
+### C.4 Code Generator 的映射要点（把 StyleSpec 落到 Matplotlib）
+
+* **透明度**：`scatter(..., alpha=ss.transparency.by_layer.points)`、`fill_between(..., alpha=…)`；
+* **配色**：`cmap='viridis'` 或 `color=discrete_colors[...]`；类别多时 `cycler`；
+* **统计标注**：
+
+  * 均值/中位：`axhline/axvline`；
+  * CI：`fill_between(y-err, y+err)`（err 来自 `sem` 或 bootstrap）；
+  * 回归：`polyfit/linregress` + `ax.plot`；注 `ax.text` 写 `R²`；
+  * 显著性：连线+星标（加 `capsize` 配合误差条）；
+* **可达性**：字号 `>= font_min_px`，`legend_framealpha` 与对比度策略。
+
+---
+
+## D. 产物与可观测性（保证“每轮可审计”）
+
+* 每轮输出：`viz_mapping.json` / `design_explorer.json` / `style_spec.json` / `code.py` / `plot.png` / `eval_L{1..4}.json`；
+* 报告页（`agents/report_builder.py`）：新增 **Aesthetic Stylist** 与 **L1–L4** 的评审面板，直观展示**每层问题 → 补丁 → 次轮效果**。
+* 评测保持与 CoDA 一致：**EPR / VSR / OS** 的离线评价脚本（如前一轮补齐计划所述）。
+
+---
+
+## E. 验收与门槛（与论文设定一致）
+
+* **早停**：当四层 `score≥0.85` 且无 `critical`，或达 **3 轮**迭代上限即停止（与论文实验配置一致）。
+* **性能**：若统计依赖缺失，则采用 `numpy` 近似以保证 **EPR**；**VSR/OS** 通过 L3/L4 的补丁持续提升。
+
+

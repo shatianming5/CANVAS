@@ -1,0 +1,51 @@
+lymphoma_number,genotype,condition,metabolite,ratio_metabolite_glucose_area_1e6_cells,lymphoma_number_2,genotype_2,condition_2,metabolite_2,x13c_area_1e6_cells
+1032,39,untreated,Citric acid,0.002270396,403.0,control;bcl2,untreated,#Citric acid,635180.7450999998
+1032,39,untreated,Citric acid,0.002588412,403.0,control;bcl2,untreated,#Citric acid,546499.5648
+1032,39,ADR,Citric acid,0.016114859,403.0,control;bcl2,untreated,#Citric acid,735605.605
+1032,39,ADR,Citric acid,0.016349047,403.0,control;bcl2,ADR,#Citric acid,594181.6667
+403,2,untreated,Citric acid,0.0038218119999999,403.0,control;bcl2,ADR,#Citric acid,1722393.178
+403,2,untreated,Citric acid,0.009423487,403.0,control;bcl2,ADR,#Citric acid,1567472.322
+403,2,ADR,Citric acid,0.1192738179999999,6581.0,Suv39h1-;bcl2,untreated,#Citric acid,1822176.136
+403,2,ADR,Citric acid,0.1097890849999999,6581.0,Suv39h1-;bcl2,untreated,#Citric acid,1692937.96
+4936,39,untreated,Citric acid,0.002249444,6581.0,Suv39h1-;bcl2,untreated,#Citric acid,1475476.09
+4936,39,ADR,Citric acid,0.007987679,6581.0,Suv39h1-;bcl2,untreated,#Citric acid,1349224.839
+4936,39,ADR,Citric acid,0.0071645969999999,6581.0,Suv39h1-;bcl2,ADR,#Citric acid,2169066.103
+5238,2,untreated,Citric acid,0.006744344,6581.0,Suv39h1-;bcl2,ADR,#Citric acid,2331558.789
+5238,2,untreated,Citric acid,0.006939067,403.0,control;bcl2,untreated,#G6P,825119.6835
+5238,2,ADR,Citric acid,0.0140060529999999,403.0,control;bcl2,untreated,#G6P,1192586.825
+5238,2,ADR,Citric acid,0.0140717809999999,403.0,control;bcl2,untreated,#G6P,1272568.52
+5783,39,untreated,Citric acid,0.009019104,403.0,control;bcl2,ADR,#G6P,3094816.725
+5783,39,untreated,Citric acid,0.008772526,403.0,control;bcl2,ADR,#G6P,3237224.186
+5783,39,ADR,Citric acid,0.0076261969999999,6581.0,Suv39h1-;bcl2,untreated,#G6P,639091.3666
+5783,39,ADR,Citric acid,0.007748619,6581.0,Suv39h1-;bcl2,untreated,#G6P,672250.3291
+6054,2,untreated,Citric acid,0.0051261969999999,6581.0,Suv39h1-;bcl2,untreated,#G6P,756814.6341
+6054,2,untreated,Citric acid,0.005473932,6581.0,Suv39h1-;bcl2,untreated,#G6P,594292.8378
+6054,2,ADR,Citric acid,0.0121849109999999,6581.0,Suv39h1-;bcl2,ADR,#G6P,1715934.544
+6581,39,untreated,Citric acid,0.007219193,6581.0,Suv39h1-;bcl2,ADR,#G6P,1015944.29
+6581,39,ADR,Citric acid,0.0175983289999999,403.0,control;bcl2,untreated,#Lactic acid,41284961.11
+6581,39,ADR,Citric acid,0.0179722649999999,403.0,control;bcl2,untreated,#Lactic acid,38758506.02
+7050,2,untreated,Citric acid,0.0029213059999999,403.0,control;bcl2,untreated,#Lactic acid,39940458.45
+7050,2,untreated,Citric acid,0.0028536769999999,403.0,control;bcl2,ADR,#Lactic acid,84305982.84
+7050,2,ADR,Citric acid,0.017323239,403.0,control;bcl2,ADR,#Lactic acid,88481565.39
+7050,2,ADR,Citric acid,0.017264896,403.0,control;bcl2,ADR,#Lactic acid,113704137.1
+1032,39,untreated,Lactic acid,4.580755840999999,403.0,control;bcl2,ADR,#Lactic acid,120189370.3
+1032,39,untreated,Lactic acid,4.392348003,6581.0,Suv39h1-;bcl2,untreated,#Lactic acid,38536000.7
+1032,39,ADR,Lactic acid,4.06855818,6581.0,Suv39h1-;bcl2,untreated,#Lactic acid,42559018.05
+1032,39,ADR,Lactic acid,4.731004449,6581.0,Suv39h1-;bcl2,untreated,#Lactic acid,34223317.14
+403,2,untreated,Lactic acid,9.831922551000002,6581.0,Suv39h1-;bcl2,untreated,#Lactic acid,31995501.76
+403,2,untreated,Lactic acid,9.782561297000004,6581.0,Suv39h1-;bcl2,ADR,#Lactic acid,49910677.83
+403,2,ADR,Lactic acid,83.53281993,6581.0,Suv39h1-;bcl2,ADR,#Lactic acid,45090598.98
+403,2,ADR,Lactic acid,69.25400174,403.0,control;bcl2,untreated,#Pyruvic acid,11788692.65
+4936,39,untreated,Lactic acid,2.628242551,403.0,control;bcl2,untreated,#Pyruvic acid,14537167.29
+4936,39,ADR,Lactic acid,2.966127976,403.0,control;bcl2,untreated,#Pyruvic acid,13767973.25
+4936,39,ADR,Lactic acid,3.681261445,403.0,control;bcl2,ADR,#Pyruvic acid,12109263.64
+5238,2,untreated,Lactic acid,4.099824591,403.0,control;bcl2,ADR,#Pyruvic acid,9908448.501
+5238,2,untreated,Lactic acid,4.233079881000001,403.0,control;bcl2,ADR,#Pyruvic acid,24932188.76
+5238,2,ADR,Lactic acid,6.466693924000001,403.0,control;bcl2,ADR,#Pyruvic acid,24842271.78
+5238,2,ADR,Lactic acid,5.229491977,6581.0,Suv39h1-;bcl2,untreated,#Pyruvic acid,19028568.06
+5783,39,untreated,Lactic acid,3.0641244650000004,6581.0,Suv39h1-;bcl2,untreated,#Pyruvic acid,18795474.36
+5783,39,untreated,Lactic acid,2.8951754899999997,6581.0,Suv39h1-;bcl2,untreated,#Pyruvic acid,14996279.08
+5783,39,ADR,Lactic acid,2.526274938,6581.0,Suv39h1-;bcl2,untreated,#Pyruvic acid,14545688.82
+5783,39,ADR,Lactic acid,2.8417653249999995,6581.0,Suv39h1-;bcl2,ADR,#Pyruvic acid,19521783.35
+6054,2,untreated,Lactic acid,3.99843892,6581.0,Suv39h1-;bcl2,ADR,#Pyruvic acid,17260554.47
+6054,2,untreated,Lactic acid,4.039949556999999,,,,,

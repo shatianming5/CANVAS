@@ -1,0 +1,31 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Logs & runtime
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node / JS
+node_modules/
+
+# Build artifacts
+dist/
+build/
+coverage/
+.coverage*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
