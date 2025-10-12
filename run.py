@@ -14,6 +14,10 @@ from PIL import Image
 
 from utils.io_utils import ensure_dir, write_json, write_text
 from utils.config import apply_env_defaults
+from agents.aesthetic_stylist import (
+    llm_aesthetic_stylist,
+    llm_aesthetic_stylist_refine,
+)
 from agents.llm_orchestrator import (
     llm_query_analyzer,
     llm_data_processor,
@@ -22,8 +26,6 @@ from agents.llm_orchestrator import (
     llm_design_explorer,
     llm_code_generator,
     llm_debug_agent,
-    llm_aesthetic_stylist,
-    llm_aesthetic_stylist_refine,
     llm_staged_visual_evaluator,
     upgrade_to_v1_2,
     reconcile_mapping_with_registry,
