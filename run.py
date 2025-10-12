@@ -22,7 +22,7 @@ from agents.llm_orchestrator import (
     llm_design_explorer,
     llm_code_generator,
     llm_debug_agent,
-    llm_visual_evaluator,
+    llm_staged_visual_evaluator,
     upgrade_to_v1_2,
     reconcile_mapping_with_registry,
     validate_spec_vs_registry,
@@ -31,6 +31,8 @@ from utils.llm_client import LLMClient
 from agents.report_builder import build_html_report
 from utils.spec_adapter import figure_spec_to_paper_schema, paper_schema_summary
 from utils.web_search import official_references
+from utils.style_rules import auto_tune_alpha, adjust_local_contrast
+from utils.stats_utils import annotate_sample_size, add_errorbars
 
 
 
@@ -689,6 +691,13 @@ def main():
     design_base_extras = copy.deepcopy(qa.get("_extras", {})) if isinstance(qa.get("_extras"), dict) else {}
     if args.style:
         design_base_extras["style"] = args.style
+    policies = design_base_extras.get("policies")
+    if not isinstance(policies, dict):
+        policies = {}
+    policies.setdefault("transparency", "auto")
+    policies.setdefault("color", "colorblind_safe")
+    policies.setdefault("stats", "n_and_ci")
+    design_base_extras["policies"] = policies
     design_base_extras["figsize"] = [args.width, args.height]
     if getattr(args, "_env_extras", None):
         for k, v in args._env_extras.items():
@@ -827,6 +836,10 @@ def main():
             " Style helpers are injected as style_global, layer_styles, merge_styles(...), resolve_palette(...), resolve_cmap(...); "
             "apply alpha/palette/cmap/linewidth/markersize/edgecolor accordingly."
         )
+        cg_guidance += (
+            " Additional helpers auto_tune_alpha(fig), adjust_local_contrast(fig), annotate_sample_size(ax, df, x, y), add_errorbars(ax, df, x, y) "
+            "are available to mitigate overplotting and surface sample sizes with confidence intervals when appropriate."
+        )
 
         reference_lines = "\n".join(
             f"- {ref.get('title', 'reference')}: {ref.get('url')}"
@@ -919,6 +932,10 @@ def main():
             local_vars["merge_styles"] = _merge_styles
             local_vars["resolve_palette"] = _resolve_palette
             local_vars["resolve_cmap"] = _resolve_cmap
+            local_vars["auto_tune_alpha"] = auto_tune_alpha
+            local_vars["adjust_local_contrast"] = adjust_local_contrast
+            local_vars["annotate_sample_size"] = annotate_sample_size
+            local_vars["add_errorbars"] = add_errorbars
             return local_vars
 
         executed = False
@@ -974,6 +991,41 @@ def main():
             fig = last_exec_locals.get("fig")
             if fig is not None:
                 try:
+                    auto_tune_alpha(fig)
+                except Exception:
+                    pass
+                try:
+                    adjust_local_contrast(fig)
+                except Exception:
+                    pass
+                try:
+                    primary_ax = fig.axes[0] if fig.axes else None
+                    x_field = None
+                    y_field = None
+                    if isinstance(dm, dict):
+                        x_field = dm.get("x_axis") or dm.get("x") or dm.get("dimension")
+                        y_field = dm.get("y_axis") or dm.get("y") or dm.get("measure")
+                    if (
+                        primary_ax is not None
+                        and x_field
+                        and y_field
+                        and x_field in df.columns
+                        and y_field in df.columns
+                        and plot_type in {"bar", "line", "area", "histogram"}
+                    ):
+                        unique_count = df[x_field].nunique(dropna=True)
+                        if 0 < unique_count <= 20:
+                            try:
+                                annotate_sample_size(primary_ax, df, x_field, y_field)
+                            except Exception:
+                                pass
+                            try:
+                                add_errorbars(primary_ax, df, x_field, y_field)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                try:
                     fig.savefig(image_target, dpi=args.dpi)
                 except Exception:
                     pass
@@ -1003,7 +1055,7 @@ def main():
         image_payload = _encode_image_payload(final_image_path)
         try:
             evaluation_json = _with_model_fallback(
-                lambda: llm_visual_evaluator(
+                lambda: llm_staged_visual_evaluator(
                     client,
                     args.query,
                     qa.get("plotting_key_points", []),
@@ -1013,6 +1065,9 @@ def main():
                     design_spec_iter,
                     image_payload,
                     iter_idx,
+                    policies=design_base_extras.get("policies"),
+                    todo=todo_plan,
+                    quality_notes=quality_issues,
                 ),
                 stage_name + "_evaluate",
             )
@@ -1028,15 +1083,32 @@ def main():
             pass
 
         metric_value = None
+        target_stage = None
+        stage_scores: Dict[str, float] = {}
+        stage_patches: Dict[str, Any] = {}
         if isinstance(evaluation_json, dict):
-            semantic_block = evaluation_json.get("semantic_accuracy")
-            if isinstance(semantic_block, dict):
-                metric_value = semantic_block.get(quality_metric_key)
-                try:
-                    metric_value = float(metric_value)
-                except Exception:
-                    metric_value = None
-        if metric_value is None:
+            overall_block = evaluation_json.get("overall")
+            if isinstance(overall_block, dict):
+                target_stage = overall_block.get("target_stage")
+                metric_value = overall_block.get(quality_metric_key)
+            stages_block = evaluation_json.get("stages")
+            if isinstance(stages_block, dict):
+                for s_name, payload in stages_block.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    score = payload.get("score")
+                    if isinstance(score, (int, float)):
+                        stage_scores[s_name] = float(score)
+                    patch = payload.get("patch_suggestions")
+                    if patch:
+                        stage_patches[s_name] = patch
+            if metric_value is None:
+                semantic_block = evaluation_json.get("semantic_accuracy")
+                if isinstance(semantic_block, dict):
+                    metric_value = semantic_block.get(quality_metric_key)
+        try:
+            metric_value = float(metric_value)
+        except Exception:
             metric_value = 0.0
 
         feedback_for_next = {
@@ -1047,6 +1119,12 @@ def main():
             "metric": metric_value,
             "metric_key": quality_metric_key,
         }
+        if target_stage:
+            feedback_for_next["target_stage"] = target_stage
+        if stage_scores:
+            feedback_for_next["stage_scores"] = stage_scores
+        if stage_patches:
+            feedback_for_next["stage_patches"] = stage_patches
 
         return {
             "iteration_index": iter_idx,

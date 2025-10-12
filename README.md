@@ -47,8 +47,8 @@ task.txt                 # Original CoDA-aligned plan (Chinese)
    Requests LLM-generated exemplar code and augments it with curated Matplotlib documentation links so every run retains reproducible references.
 5. **Iterative Design & Code Generation (`llm_design_explorer` → `llm_code_generator` → execution + `llm_debug_agent`)**  
    For each iteration, the design explorer expands layout/styling plans using extras such as inferred figure size, facet counts, and style context extracted by `_extract_style_context`. The code generator produces Matplotlib code plus execution notes; the scaffold immediately executes it with a controlled local namespace (`_build_exec_locals`). Execution failures trigger the debug agent, which suggests patches and resubmitted code that is re-run automatically.
-6. **Visual Evaluation (`llm_visual_evaluator`)**  
-   The resulting plot (base64-encoded by `_encode_image_payload`) is graded with semantic accuracy metrics (default `specification_adherence_score`). Feedback, detected issues, and `quality_metric` values are bundled for the next refinement loop.
+6. **Visual Evaluation (`llm_staged_visual_evaluator`)**  
+   The evaluator now returns four-layer diagnostics (L1 orchestration → L4 polish) plus an overall score. Each layer surfaces risks, JSON patch suggestions, and a recommended target stage while preserving the legacy `semantic_accuracy` block for compatibility.
 7. **Reporting & Indexing**  
    Once stopping criteria are met, `run.py` writes canonical artifacts (`design_explorer.json`, `generated_plot.py`, `visual_evaluator.json`, etc.), builds `results.json`, and calls `agents.report_builder.build_html_report` to assemble `report.html`. Any API fallbacks are captured in `llm_errors.json`.
 

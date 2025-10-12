@@ -593,3 +593,112 @@ Image Payload: {json.dumps(image_payload)}
 """
     out = client.chat([{"role": "user", "content": prompt}])
     return _parse_json_block(out)
+
+
+def llm_staged_visual_evaluator(
+    client: LLMClient,
+    query: str,
+    key_points: List[str],
+    df: pd.DataFrame,
+    mapping: Dict[str, Any],
+    paper_schema: Dict[str, Any],
+    design_spec: Dict[str, Any],
+    image_payload: Dict[str, Any],
+    iteration: int,
+    *,
+    policies: Optional[Dict[str, Any]] = None,
+    todo: Optional[Dict[str, Any]] = None,
+    quality_notes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    data_ctx = {
+        "shape": f"{df.shape[0]}x{df.shape[1]}",
+        "columns": list(map(str, df.columns.tolist())),
+        "dtypes": {str(col): str(df[col].dtype) for col in df.columns},
+    }
+    iter_label = "initial" if iteration == 1 else f"iteration_{iteration}"
+    stage_brief = {
+        "L1": "Orchestration: global styling policies, legend strategy, run-level coherence, respectful of declared transparency/color/statistics policies.",
+        "L2": "Composition: subplot layout, axis pairing, facet structure, secondary axes labeling, avoiding overcrowding.",
+        "L3": "Calibration: data-to-visual mapping fidelity, statistical summaries, color scales (centering, ranges), reproducibility of transformations.",
+        "L4": "Polish: tick formatting, annotations placement, contrast, alpha fine tuning, clarity of callouts and captions.",
+    }
+    skeleton = {
+        "overall": {
+            "specification_adherence_score": 0.0,
+            "target_stage": "L1",
+            "rationale": "",
+            "next_actions": [],
+            "risks": [],
+        },
+        "stages": {
+            "L1": {
+                "score": 0.0,
+                "risk": "low",
+                "issues": [],
+                "patch_suggestions": {"ops": []},
+                "notes": [],
+            },
+            "L2": {
+                "score": 0.0,
+                "risk": "low",
+                "issues": [],
+                "patch_suggestions": {"ops": []},
+                "notes": [],
+            },
+            "L3": {
+                "score": 0.0,
+                "risk": "low",
+                "issues": [],
+                "patch_suggestions": {"ops": []},
+                "notes": [],
+            },
+            "L4": {
+                "score": 0.0,
+                "risk": "low",
+                "issues": [],
+                "patch_suggestions": {"ops": []},
+                "notes": [],
+            },
+        },
+        "semantic_accuracy": {
+            "data_query_match": 0.0,
+            "mathematical_correctness": 0.0,
+            "visual_element_compliance": 0.0,
+            "layout_structure_match": 0.0,
+            "specification_adherence_score": 0.0,
+        },
+        "accessibility": {"color_contrast": "pass", "annotations": "pass", "notes": []},
+        "image_diagnostics": {"warnings": [], "observations": []},
+    }
+    prompt = f"""
+You are Dr. Elena Vasquez. Perform a four-layer review of the visualization according to the CoDA staged evaluator:
+- L1 Orchestration: {stage_brief['L1']}
+- L2 Composition: {stage_brief['L2']}
+- L3 Calibration: {stage_brief['L3']}
+- L4 Polish: {stage_brief['L4']}
+
+Return JSON matching exactly this schema (fill in values; keep all keys):
+{json.dumps(skeleton, ensure_ascii=False, indent=2)}
+
+Guidelines:
+- Scores must be floats between 0 and 1.
+- risk must be one of "low", "medium", or "high".
+- patch_suggestions.ops should be a JSON Patch style list (can be empty) tailored to the specific stage.
+- \"target_stage\" should reference the layer with the most critical issues this iteration.
+- Always align recommendations with the stated policies and TODO plan when present.
+- Reference iteration label "{iter_label}" when discussing improvements.
+
+Context:
+Query: {query}
+Key Points: {json.dumps(key_points, ensure_ascii=False)}
+Policies: {json.dumps(policies or {}, ensure_ascii=False)}
+TODO Plan: {json.dumps(todo or {}, ensure_ascii=False)}
+Quality Notes: {json.dumps(quality_notes or [], ensure_ascii=False)}
+Data Context: {json.dumps(data_ctx, ensure_ascii=False)}
+FigureSpec: {json.dumps(mapping, ensure_ascii=False)}
+PaperSchema: {json.dumps(paper_schema, ensure_ascii=False)}
+DesignSpec: {json.dumps(design_spec, ensure_ascii=False)}
+Image Payload: {json.dumps(image_payload)}
+"""
+    out = client.chat([{"role": "user", "content": prompt}])
+    return _parse_json_block(out)
