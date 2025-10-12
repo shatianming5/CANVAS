@@ -22,6 +22,8 @@ from agents.llm_orchestrator import (
     llm_design_explorer,
     llm_code_generator,
     llm_debug_agent,
+    llm_aesthetic_stylist,
+    llm_aesthetic_stylist_refine,
     llm_staged_visual_evaluator,
     upgrade_to_v1_2,
     reconcile_mapping_with_registry,
@@ -33,6 +35,7 @@ from utils.spec_adapter import figure_spec_to_paper_schema, paper_schema_summary
 from utils.web_search import official_references
 from utils.style_rules import auto_tune_alpha, adjust_local_contrast
 from utils.stats_utils import annotate_sample_size, add_errorbars
+from utils.style_spec import StyleSpec
 
 
 
@@ -698,6 +701,8 @@ def main():
     policies.setdefault("color", "colorblind_safe")
     policies.setdefault("stats", "n_and_ci")
     design_base_extras["policies"] = policies
+    style_spec_state = StyleSpec.default()
+    design_base_extras["style_spec_seed"] = style_spec_state.to_dict()
     design_base_extras["figsize"] = [args.width, args.height]
     if getattr(args, "_env_extras", None):
         for k, v in args._env_extras.items():
@@ -727,8 +732,10 @@ def main():
     best_metric_value = float("-inf")
 
     def _execute_iteration(iter_idx: int, feedback_payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        nonlocal style_spec_state
         stage_name = f"iteration_{iter_idx}"
         extras = copy.deepcopy(design_base_extras)
+        extras["style_spec"] = style_spec_state.to_dict()
         extras["iteration"] = iter_idx
         if feedback_payload:
             extras["feedback"] = feedback_payload
@@ -755,11 +762,72 @@ def main():
         design_spec_iter["_extras"] = extras
         design_spec_iter.setdefault("self_reflection_notes", [])
         design_spec_iter.setdefault("code_generator_actions", [])
+        design_spec_iter["_previous_style_spec"] = style_spec_state.to_dict()
 
         design_path = out_dir / f"design_explorer_iter_{iter_idx}.json"
+
+        stylist_stage_name = stage_name + "_stylist"
+        style_spec_raw: Dict[str, Any] = {}
+        stylist_data_context = {
+            "shape": data_char.get("shape"),
+            "columns": data_char.get("columns"),
+            "dtypes": data_char.get("dtypes"),
+            "quality_issues": quality_issues,
+            "plot_type": plot_type,
+        }
+        try:
+            if iter_idx > 1 and feedback_payload:
+                style_spec_raw = _with_model_fallback(
+                    lambda: llm_aesthetic_stylist_refine(
+                        client,
+                        style_spec_state.to_dict(),
+                        feedback=feedback_payload,
+                        iteration=iter_idx,
+                    ),
+                    stylist_stage_name,
+                )
+            else:
+                style_spec_raw = _with_model_fallback(
+                    lambda: llm_aesthetic_stylist(
+                        client,
+                        args.query,
+                        design_spec_iter,
+                        mapping_spec,
+                        stylist_data_context,
+                        policies=policies,
+                        search_context=search_context,
+                        iteration=iter_idx,
+                        feedback=feedback_payload,
+                    ),
+                    stylist_stage_name,
+                )
+        except Exception as e:
+            _record_llm_error(stylist_stage_name, e)
+            style_spec_raw = style_spec_state.to_dict()
+
+        style_spec_candidate = StyleSpec(style_spec_state.to_dict())
+        if isinstance(style_spec_raw, dict):
+            style_spec_candidate.merge(style_spec_raw)
+        stage_patches = {}
+        if isinstance(feedback_payload, dict):
+            stage_patches = feedback_payload.get("stage_patches", {}) or {}
+        if isinstance(stage_patches, dict):
+            for key in ("L1", "L3", "L4"):
+                patch_payload = stage_patches.get(key)
+                if isinstance(patch_payload, dict):
+                    style_spec_candidate.update_from_feedback({"patch_suggestions": patch_payload})
+        style_spec_state = style_spec_candidate
+        style_spec_dict = style_spec_state.to_dict()
+        design_spec_iter["_style_spec"] = style_spec_dict
         write_json(design_spec_iter, design_path)
         try:
             print(f"[5.{iter_idx}] Design Explorer -> {design_path}", flush=True)
+        except Exception:
+            pass
+        style_spec_path = out_dir / f"style_spec_iter_{iter_idx}.json"
+        write_json(style_spec_dict, style_spec_path)
+        try:
+            print(f"[5.{iter_idx}] Aesthetic Stylist -> {style_spec_path}", flush=True)
         except Exception:
             pass
 
@@ -773,6 +841,7 @@ def main():
                     int(df.shape[1]),
                     list(map(str, df.columns.tolist())),
                     data_quality_score,
+                    style_spec_dict,
                     mapping_spec,
                     paper_schema,
                     search_context,
@@ -1068,6 +1137,7 @@ def main():
                     policies=design_base_extras.get("policies"),
                     todo=todo_plan,
                     quality_notes=quality_issues,
+                    style_spec=style_spec_dict,
                 ),
                 stage_name + "_evaluate",
             )
@@ -1118,6 +1188,7 @@ def main():
             "iteration": iter_idx,
             "metric": metric_value,
             "metric_key": quality_metric_key,
+            "style_spec": style_spec_dict,
         }
         if target_stage:
             feedback_for_next["target_stage"] = target_stage
@@ -1140,6 +1211,8 @@ def main():
             "metric_value": metric_value,
             "feedback_for_next": feedback_for_next,
             "image_path": final_image_path,
+            "style_spec": style_spec_dict,
+            "style_spec_path": style_spec_path,
         }
 
     for iter_idx in range(1, args.max_iter + 1):
@@ -1187,6 +1260,8 @@ def main():
     final_evaluation_json = final_iteration.get("evaluation_json") or {}
     final_image_path = final_iteration.get("image_path")
     final_iteration_index = final_iteration.get("iteration_index", 1)
+    final_style_spec = final_iteration.get("style_spec") or {}
+    final_style_spec_path = final_iteration.get("style_spec_path")
 
     if final_design_spec:
         write_json(final_design_spec, out_dir / "design_explorer.json")
@@ -1205,6 +1280,10 @@ def main():
         write_text(final_generated_code, out_dir / "generated_plot.py")
     if final_evaluation_json:
         write_json(final_evaluation_json, out_dir / "visual_evaluator.json")
+    if final_style_spec:
+        write_json(final_style_spec, out_dir / "style_spec.json")
+        if final_iteration_index > 1:
+            write_json(final_style_spec, out_dir / "style_spec_refined.json")
     if final_debug_path and isinstance(final_debug_path, Path) and final_debug_path.exists():
         try:
             (out_dir / "debug_agent.json").write_bytes(final_debug_path.read_bytes())
@@ -1250,6 +1329,7 @@ def main():
             "visual_evaluator": str((out_dir / "visual_evaluator.json").resolve()) if (out_dir / "visual_evaluator.json").exists() else None,
             "processed_data": str((out_dir / "processed_data.csv").resolve()) if (out_dir / "processed_data.csv").exists() else None,
             "debug_agent": str((out_dir / "debug_agent.json").resolve()) if (out_dir / "debug_agent.json").exists() else None,
+            "style_spec": str((out_dir / "style_spec.json").resolve()) if (out_dir / "style_spec.json").exists() else None,
         },
         "best_iteration": final_iteration_index,
         "best_metric_value": best_metric_value,
@@ -1260,6 +1340,7 @@ def main():
                 "design_path": str(result.get("design_path")) if isinstance(result.get("design_path"), Path) else result.get("design_path"),
                 "code_path": str(result.get("code_path")) if isinstance(result.get("code_path"), Path) else result.get("code_path"),
                 "evaluation_path": str(result.get("evaluation_path")) if isinstance(result.get("evaluation_path"), Path) else result.get("evaluation_path"),
+                "style_spec_path": str(result.get("style_spec_path")) if isinstance(result.get("style_spec_path"), Path) else result.get("style_spec_path"),
             }
             for result in iteration_results
         ],

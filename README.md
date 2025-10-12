@@ -45,11 +45,13 @@ task.txt                 # Original CoDA-aligned plan (Chinese)
    Generates a FigureSpec-like mapping that is upgraded to v1.2 via `upgrade_to_v1_2`, reconciled against the dataset registry, and validated by `validate_spec_vs_registry`. The spec is also converted into a paper-schema summary through `figure_spec_to_paper_schema` / `paper_schema_summary`. Heatmap-specific helpers (`_prepare_heatmap_dataframe`, `_order_heatmap_columns`, `_format_heatmap_condition`) restructure genomics-style matrices into long-form data when `rect` geoms are detected.
 4. **Search Agent (`llm_search_agent` + `utils.web_search.official_references`)**  
    Requests LLM-generated exemplar code and augments it with curated Matplotlib documentation links so every run retains reproducible references.
-5. **Iterative Design & Code Generation (`llm_design_explorer` → `llm_code_generator` → execution + `llm_debug_agent`)**  
-   For each iteration, the design explorer expands layout/styling plans using extras such as inferred figure size, facet counts, and style context extracted by `_extract_style_context`. The code generator produces Matplotlib code plus execution notes; the scaffold immediately executes it with a controlled local namespace (`_build_exec_locals`). Execution failures trigger the debug agent, which suggests patches and resubmitted code that is re-run automatically.
-6. **Visual Evaluation (`llm_staged_visual_evaluator`)**  
-   The evaluator now returns four-layer diagnostics (L1 orchestration → L4 polish) plus an overall score. Each layer surfaces risks, JSON patch suggestions, and a recommended target stage while preserving the legacy `semantic_accuracy` block for compatibility.
-7. **Reporting & Indexing**  
+5. **Aesthetic Stylist (`llm_aesthetic_stylist` / `llm_aesthetic_stylist_refine`)**  
+   Produces a structured StyleSpec (palette, transparency, statistical annotations, layout, accessibility) aligned with declared policies and stage feedback. StyleSpec patches are merged across iterations and persisted for auditing.
+6. **Iterative Design & Code Generation (`llm_design_explorer` → `llm_code_generator` → execution + `llm_debug_agent`)**  
+   For each iteration, the design explorer expands layout plans while consuming the latest StyleSpec; the stylist delivers refreshed directives which the code generator is instructed to honour explicitly. Generated Matplotlib code runs inside a controlled namespace (`_build_exec_locals`). Execution failures trigger the debug agent, which proposes fixes that are re-run automatically.
+7. **Visual Evaluation (`llm_staged_visual_evaluator`)**  
+   The evaluator now returns four-layer diagnostics (L1 orchestration → L4 polish) plus an overall score, taking StyleSpec, policies, and TODO items into account. Each layer surfaces risks, JSON patch suggestions, and a recommended target stage while preserving the legacy `semantic_accuracy` block for compatibility.
+8. **Reporting & Indexing**  
    Once stopping criteria are met, `run.py` writes canonical artifacts (`design_explorer.json`, `generated_plot.py`, `visual_evaluator.json`, etc.), builds `results.json`, and calls `agents.report_builder.build_html_report` to assemble `report.html`. Any API fallbacks are captured in `llm_errors.json`.
 
 ### Iterative Self-Reflection Loop
@@ -141,10 +143,10 @@ python run.py --query "Scatter plot of height vs weight by gender" --data data/p
 ## Outputs
 VizFlow writes all artifacts to the chosen `out/` directory:
 
-- Core JSON traces: `query_analyzer.json`, `data_processor.json`, `viz_mapping.json`, `viz_mapping_paper.json`, `design_explorer.json`, `code_generator.json`, `visual_evaluator.json`.
-- Iteration snapshots: `design_explorer_iter_k.json`, `code_generator_plan_iter_k.json`, `generated_plot_iter_k.py`, `visual_evaluator_iter_k.json`, `debug_agent_iter_k.json` (when applicable).
+- Core JSON traces: `query_analyzer.json`, `data_processor.json`, `viz_mapping.json`, `viz_mapping_paper.json`, `design_explorer.json`, `style_spec.json`, `code_generator.json`, `visual_evaluator.json`.
+- Iteration snapshots: `design_explorer_iter_k.json`, `style_spec_iter_k.json`, `code_generator_plan_iter_k.json`, `generated_plot_iter_k.py`, `visual_evaluator_iter_k.json`, `debug_agent_iter_k.json` (当发生错误时)。
 - Code & media: `generated_plot.py`, `plot.<format>`, per-iteration `generated_plot_iter_k.py`, and the processed CSV (`processed_data.csv`).
-- Index & reporting: `results.json` (paths + best iteration metadata), `search_agent_example.py`, `search_agent_references.json`, `report.html`, optional `llm_errors.json`.
+- Index & reporting: `results.json` (paths + best iteration metadata), `search_agent_example.py`, `search_agent_references.json`, `report.html`, optional `style_spec_refined.json`, `llm_errors.json`.
 
 ## Benchmarking & Utilities
 - `python -m bench.run_metrics outputs/results.json` compares VizFlow runs and reports Execution Pass Rate (EPR), Visual Success Rate (VSR), and Overall Score (OS).

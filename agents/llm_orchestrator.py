@@ -474,6 +474,7 @@ def llm_code_generator(
     n_cols: int,
     data_columns: List[str],
     data_quality_score: float,
+    style_spec: Dict[str, Any],
     mapping: Dict[str, Any],
     paper_schema: Dict[str, Any],
     search_context: Dict[str, Any],
@@ -484,17 +485,19 @@ def llm_code_generator(
     search_refs = json.dumps(search_context.get("references", []), ensure_ascii=False)
     example_code = search_context.get("example_code") or ""
     feedback_json = json.dumps(feedback or {}, ensure_ascii=False)
+    style_spec_json = json.dumps(style_spec or {}, ensure_ascii=False)
     prompt = f"""
 You are Alex Thompson. Produce a concise, actionable matplotlib code generation plan based on FigureSpec v1.2.
 Current pipeline stage: {stage}. If feedback highlights issues, address them explicitly.
 Reference official patterns from these sources: {search_refs}.
 Incorporate insights from the provided gallery snippet when useful.
-Return only JSON. Focus on layered rendering order, secondary axis routing, broken-axis helper usage, and per-layer data_plan. Highlight how global design.style and layer.style values (alpha/palette/cmap/linewidth/markersize/edgecolor) should feed into the plotting helpers. Include actions that respond to code_generator_actions from Design Explorer.
+Return only JSON. Focus on layered rendering order, secondary axis routing, broken-axis helper usage, and per-layer data_plan. Highlight how global design.style, StyleSpec directives (palette/transparency/stat_annotations/layout/accessibility), and layer.style values (alpha/palette/cmap/linewidth/markersize/edgecolor) should feed into the plotting helpers. Include actions that respond to code_generator_actions from Design Explorer.
 
 Context: {json.dumps(context_json, ensure_ascii=False)}
 MappingSpec: {json.dumps(mapping, ensure_ascii=False)}
 DesignSpec: {json.dumps(design_spec_json, ensure_ascii=False)}
 PaperSchema: {json.dumps(paper_schema, ensure_ascii=False)}
+StyleSpec: {style_spec_json}
 Data: shape=({n_rows},{n_cols}), columns={data_columns}, quality_score={data_quality_score}
 Feedback: {feedback_json}
 ExampleSnippet:
@@ -595,6 +598,113 @@ Image Payload: {json.dumps(image_payload)}
     return _parse_json_block(out)
 
 
+def llm_aesthetic_stylist(
+    client: LLMClient,
+    query: str,
+    design_spec: Dict[str, Any],
+    mapping: Dict[str, Any],
+    data_context: Dict[str, Any],
+    *,
+    policies: Optional[Dict[str, Any]] = None,
+    search_context: Optional[Dict[str, Any]] = None,
+    iteration: int = 1,
+    feedback: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    stage = "initial" if iteration == 1 else f"self_reflection_round_{iteration}"
+    policies_json = json.dumps(policies or {}, ensure_ascii=False)
+    design_summary = paper_schema_summary(figure_spec_to_paper_schema(mapping))
+    feedback_json = json.dumps(feedback or {}, ensure_ascii=False)
+    gallery_refs = json.dumps(
+        (search_context or {}).get("references", []),
+        ensure_ascii=False,
+    )
+    skeleton = {
+        "style_spec_version": "1.0",
+        "palette": {
+            "mode": "categorical",
+            "name": "tab10",
+            "n_colors": 10,
+            "colorblind_safe": True,
+            "colors": [],
+            "color_mapping": {},
+            "contrast_ratio_min": 4.5,
+        },
+        "transparency": {
+            "global_alpha": 0.85,
+            "by_layer": {"points": 0.35, "bars": 0.65, "lines": 0.8},
+            "overplotting_strategy": "auto_alpha",
+        },
+        "stat_annotations": {
+            "enable_sample_size": True,
+            "enable_confidence_interval": True,
+            "confidence_level": 0.95,
+            "trend": None,
+            "group_comparison": None,
+        },
+        "layout_tuning": {
+            "plt_style": "seaborn-v0_8-whitegrid",
+            "grid": {"show": True, "which": "major", "alpha": 0.25},
+            "ticks": {"rotation_x": 0, "format_y": "plain"},
+            "constrained_layout": True,
+        },
+        "accessibility": {
+            "font_min_px": 12,
+            "legend_position": "best",
+            "legend_framealpha": 0.85,
+            "wcag_level": "AA",
+        },
+        "patches": {"ops": []},
+        "notes": [],
+    }
+    prompt = f"""
+You are Dr. Mei Tan, an aesthetic stylist specialising in Matplotlib and CoDA-style pipelines.
+Stage: {stage}. Your task is to propose a structured StyleSpec JSON that harmonises the current design intent with global policies and accessibility needs.
+
+Requirements:
+- Honour the provided policies (transparency, color, statistics) where possible.
+- Ensure palettes are colorblind-safe and annotate expectations for sample size / confidence intervals.
+- Suggest overplotting mitigation strategies if density is high.
+- Return JSON matching this skeleton (keep all keys, fill in values): {json.dumps(skeleton, ensure_ascii=False, indent=2)}
+- Enumerate any additional comments in "notes".
+- Include patch suggestions in patches.ops when specific adjustments are required.
+
+Context:
+Query: {query}
+DesignSpec: {json.dumps(design_spec, ensure_ascii=False)}
+FigureSpec Summary: {design_summary}
+Policies: {policies_json}
+Data Context: {json.dumps(data_context, ensure_ascii=False)}
+Gallery References: {gallery_refs}
+Feedback: {feedback_json}
+"""
+    out = client.chat([{"role": "user", "content": prompt}])
+    return _parse_json_block(out)
+
+
+def llm_aesthetic_stylist_refine(
+    client: LLMClient,
+    previous_stylespec: Dict[str, Any],
+    *,
+    feedback: Optional[Dict[str, Any]] = None,
+    iteration: int = 1,
+) -> Dict[str, Any]:
+    stage = "initial" if iteration == 1 else f"self_reflection_round_{iteration}"
+    skeleton = copy.deepcopy(previous_stylespec)
+    skeleton.setdefault("patches", {"ops": []})
+    prompt = f"""
+You are Dr. Mei Tan revisiting a StyleSpec for iteration {iteration} ({stage}).
+Refine the existing spec in response to the feedback.
+Keep the original structure and update only the necessary fields. When applying targeted fixes, add entries to patches.ops using JSON Patch semantics ("add"/"replace"/"remove").
+
+Existing StyleSpec: {json.dumps(previous_stylespec, ensure_ascii=False)}
+Feedback: {json.dumps(feedback or {}, ensure_ascii=False)}
+
+Return updated StyleSpec JSON only.
+"""
+    out = client.chat([{"role": "user", "content": prompt}])
+    return _parse_json_block(out)
+
+
 def llm_staged_visual_evaluator(
     client: LLMClient,
     query: str,
@@ -609,6 +719,7 @@ def llm_staged_visual_evaluator(
     policies: Optional[Dict[str, Any]] = None,
     todo: Optional[Dict[str, Any]] = None,
     quality_notes: Optional[List[str]] = None,
+    style_spec: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     data_ctx = {
         "shape": f"{df.shape[0]}x{df.shape[1]}",
@@ -694,6 +805,7 @@ Key Points: {json.dumps(key_points, ensure_ascii=False)}
 Policies: {json.dumps(policies or {}, ensure_ascii=False)}
 TODO Plan: {json.dumps(todo or {}, ensure_ascii=False)}
 Quality Notes: {json.dumps(quality_notes or [], ensure_ascii=False)}
+StyleSpec: {json.dumps(style_spec or {}, ensure_ascii=False)}
 Data Context: {json.dumps(data_ctx, ensure_ascii=False)}
 FigureSpec: {json.dumps(mapping, ensure_ascii=False)}
 PaperSchema: {json.dumps(paper_schema, ensure_ascii=False)}

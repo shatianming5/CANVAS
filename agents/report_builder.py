@@ -24,6 +24,8 @@ def build_html_report(outputs_dir: Path) -> str:
     der = jread("design_explorer_refined.json")
     cg = jread("code_generator.json")
     ve = jread("visual_evaluator.json")
+    ss = jread("style_spec.json")
+    ssr = jread("style_spec_refined.json")
     res = jread("results.json")
 
     # Detect image file (prefer results.json path if present)
@@ -59,6 +61,10 @@ def build_html_report(outputs_dir: Path) -> str:
         html.append(section("Design Explorer", f"<pre>{json.dumps(de, ensure_ascii=False, indent=2)}</pre>"))
     if der:
         html.append(section("Design Refined", f"<pre>{json.dumps(der, ensure_ascii=False, indent=2)}</pre>"))
+    if ss:
+        html.append(section("Style Spec", f"<pre>{json.dumps(ss, ensure_ascii=False, indent=2)}</pre>"))
+    if ssr:
+        html.append(section("Style Spec Refined", f"<pre>{json.dumps(ssr, ensure_ascii=False, indent=2)}</pre>"))
     if cg:
         html.append(section("Code Generator", f"<pre>{json.dumps(cg, ensure_ascii=False, indent=2)}</pre>"))
     if ve:
